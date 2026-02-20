@@ -6,6 +6,7 @@ import { AICore } from './AICore'
 import { Rings } from './Rings'
 import { Particles } from './Particles'
 import { useAIState } from '../hooks/useAIState'
+import { useAudio } from '../hooks/useAudio'
 import type { AIState } from '../types'
 
 // ── Reactive point light ──────────────────────────────────────────────────────
@@ -110,10 +111,71 @@ function StatusOverlay({ state }: { state: AIState }) {
   )
 }
 
+// ── Audio enable / status button ──────────────────────────────────────────────
+
+function AudioButton({
+  enabled,
+  lastChunk,
+  onEnable,
+}: {
+  enabled: boolean
+  lastChunk: number
+  onEnable: () => void
+}) {
+  if (!enabled) {
+    return (
+      <button
+        onClick={onEnable}
+        style={{
+          position:       'fixed',
+          top:            '24px',
+          right:          '24px',
+          zIndex:         10,
+          background:     'rgba(255,255,255,0.06)',
+          border:         '1px solid rgba(255,255,255,0.18)',
+          borderRadius:   '8px',
+          color:          '#a78bfa',
+          fontFamily:     "'Courier New', Courier, monospace",
+          fontSize:       '12px',
+          letterSpacing:  '0.2em',
+          padding:        '10px 18px',
+          cursor:         'pointer',
+          backdropFilter: 'blur(6px)',
+        }}
+      >
+        ▶ ENABLE AUDIO
+      </button>
+    )
+  }
+
+  // Show a brief flash on each received chunk; otherwise show a muted "audio on" badge
+  const age = Date.now() - lastChunk
+  const fresh = lastChunk > 0 && age < 1200
+  return (
+    <div
+      style={{
+        position:      'fixed',
+        top:           '24px',
+        right:         '24px',
+        zIndex:        10,
+        fontFamily:    "'Courier New', Courier, monospace",
+        fontSize:      '11px',
+        letterSpacing: '0.2em',
+        color:          fresh ? '#4ade80' : '#ffffff22',
+        transition:    'color 0.4s',
+        padding:       '10px 18px',
+      }}
+    >
+      {fresh ? '♪ AUDIO' : '· AUDIO ON'}
+    </div>
+  )
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 
 export function Scene() {
-  const { state, rms } = useAIState()
+  const { state, rms }              = useAIState()
+  const { enabled, enable, lastChunk } = useAudio()
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000005' }}>
@@ -128,6 +190,7 @@ export function Scene() {
       </Canvas>
 
       <StatusOverlay state={state} />
+      <AudioButton enabled={enabled} lastChunk={lastChunk} onEnable={enable} />
     </div>
   )
 }

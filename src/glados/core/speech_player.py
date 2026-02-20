@@ -108,6 +108,15 @@ class SpeechPlayer:
                         )
 
                     self.audio_io.start_speaking(audio_msg.audio, self.tts_sample_rate)
+                    # Stream the same audio to any connected web (browser/Chromecast) clients
+                    try:
+                        from glados.state_server import get_server  # noqa: PLC0415
+
+                        _srv = get_server()
+                        if _srv is not None:
+                            _srv.broadcast_audio(audio_msg.audio, self.tts_sample_rate)
+                    except Exception:
+                        pass
                     logger.success(f"TTS text: {audio_msg.text}")
 
                     # Wait for the audio to finish playing or be interrupted

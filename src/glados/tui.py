@@ -1237,10 +1237,11 @@ class GladosUI(App[None]):
         if not self._state_server_started:
             self._state_server_started = True
             try:
-                from glados.state_server import StateServer  # noqa: PLC0415
+                from glados.state_server import StateServer, set_server  # noqa: PLC0415
 
                 srv = StateServer()
                 srv.start()
+                set_server(srv)
                 self._state_server = srv
             except Exception:
                 self._state_server = None

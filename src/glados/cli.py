@@ -241,10 +241,11 @@ def start(
 
     # Start the web state server so the React UI works with both `glados` and `glados tui`
     try:
-        from glados.state_server import StateServer  # noqa: PLC0415
+        from glados.state_server import StateServer, set_server  # noqa: PLC0415
 
         _state_server = StateServer()
         _state_server.start()
+        set_server(_state_server)
 
         # Patch the engine's audio refresh loop to push state updates
         import threading  # noqa: PLC0415
