@@ -1,0 +1,29 @@
+{
+  "name": "glados-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5173",
+    "start": "npm run build && vite preview --port 5173"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9",
+    "@react-three/fiber": "^8",
+    "@react-three/postprocessing": "^2",
+    "postprocessing": "^6",
+    "react": "^18",
+    "react-dom": "^18",
+    "three": "^0.171"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/three": "^0.171",
+    "@vitejs/plugin-react": "^4",
+    "typescript": "^5",
+    "vite": "^5"
+  }
+}

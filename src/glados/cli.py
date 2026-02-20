@@ -238,6 +238,36 @@ def start(
     glados = Glados.from_config(glados_config)
     if glados.announcement:
         glados.play_announcement()
+
+    # Start the web state server so the React UI works with both `glados` and `glados tui`
+    try:
+        from glados.state_server import StateServer  # noqa: PLC0415
+
+        _state_server = StateServer()
+        _state_server.start()
+
+        # Patch the engine's audio refresh loop to push state updates
+        import threading  # noqa: PLC0415
+
+        def _push_state() -> None:
+            import time  # noqa: PLC0415
+
+            while True:
+                try:
+                    snapshot = glados.audio_state.snapshot()
+                    speaking = glados.currently_speaking_event.is_set()
+                    listening = snapshot.vad_active and not speaking
+                    agent_state = "speaking" if speaking else ("listening" if listening else "idle")
+                    _state_server.update(agent_state, snapshot.rms)
+                except Exception:
+                    pass
+                time.sleep(0.15)
+
+        t = threading.Thread(target=_push_state, daemon=True, name="glados-state-pusher")
+        t.start()
+    except Exception:
+        pass
+
     glados.run()
 
 

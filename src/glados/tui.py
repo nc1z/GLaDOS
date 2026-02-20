@@ -934,6 +934,9 @@ class GladosUI(App[None]):
     _queue_panel: QueuePanel | None = None
     _autonomy_panel: AutonomyPanel | None = None
     _mcp_panel: MCPPanel | None = None
+    # Web state server — None until first successful start attempt
+    _state_server: object = None
+    _state_server_started: bool = False
     _queue_metrics: dict[str, dict[str, float | int | None]]
     _config_path: Path
     _input_mode_override: str | None
@@ -1229,6 +1232,25 @@ class GladosUI(App[None]):
             self._autonomy_panel.render_autonomy(self)
         if self._mcp_panel:
             self._mcp_panel.render_mcp(self)
+
+        # ── Web state server (lazy-start once, then push updates) ──────────
+        if not self._state_server_started:
+            self._state_server_started = True
+            try:
+                from glados.state_server import StateServer  # noqa: PLC0415
+
+                srv = StateServer()
+                srv.start()
+                self._state_server = srv
+            except Exception:
+                self._state_server = None
+
+        if self._state_server is not None:
+            snapshot = engine.audio_state.snapshot()
+            speaking = engine.currently_speaking_event.is_set()
+            listening = snapshot.vad_active and not speaking
+            agent_state = "speaking" if speaking else ("listening" if listening else "idle")
+            self._state_server.update(agent_state, snapshot.rms)  # type: ignore[union-attr]
 
     @property
     def queue_metrics(self) -> dict[str, dict[str, float | int | None]]:
