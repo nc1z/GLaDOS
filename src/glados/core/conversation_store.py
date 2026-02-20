@@ -25,7 +25,11 @@ class ConversationStore:
     threading.Lock that was conditionally acquired.
     """
 
-    def __init__(self, initial_messages: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        initial_messages: list[dict[str, Any]] | None = None,
+        max_messages: int | None = None,
+    ) -> None:
         """
         Initialize the conversation store.
 
@@ -36,6 +40,12 @@ class ConversationStore:
         self._lock = threading.RLock()  # RLock allows nested acquisition if needed
         self._messages: list[dict[str, Any]] = list(initial_messages or [])
         self._version: int = 0  # For change detection / optimistic concurrency
+        # Optional hard cap on history length to keep prompts fast.
+        # If set, we keep the most recent max_messages while preserving leading system messages.
+        self._max_messages = max_messages
+
+        if self._max_messages is not None:
+            self._truncate_locked()
 
     def append(self, message: dict[str, Any]) -> int:
         """
@@ -49,6 +59,8 @@ class ConversationStore:
         """
         with self._lock:
             self._messages.append(message)
+            if self._max_messages is not None:
+                self._truncate_locked()
             self._version += 1
             return len(self._messages)
 
@@ -67,6 +79,8 @@ class ConversationStore:
         """
         with self._lock:
             self._messages.extend(messages)
+            if self._max_messages is not None:
+                self._truncate_locked()
             self._version += 1
             return len(self._messages)
 
@@ -110,7 +124,44 @@ class ConversationStore:
         with self._lock:
             self._messages.clear()
             self._messages.extend(new_messages)
+            if self._max_messages is not None:
+                self._truncate_locked()
             self._version += 1
+
+    def _truncate_locked(self) -> None:
+        """
+        Truncate history to the most recent max_messages, while keeping leading system messages.
+
+        This keeps prompts small and latency low on local models.
+        """
+        if self._max_messages is None:
+            return
+        if len(self._messages) <= self._max_messages:
+            return
+
+        # Preserve all leading system messages, then keep only the most recent
+        # user/assistant/tool messages within the remaining budget.
+        system_prefix: list[dict[str, Any]] = []
+        idx = 0
+        for msg in self._messages:
+            if msg.get("role") == "system":
+                system_prefix.append(msg)
+                idx += 1
+            else:
+                break
+
+        tail = self._messages[idx:]
+        if not tail:
+            self._messages = system_prefix[-self._max_messages :]  # Worst case, only system messages
+            return
+
+        remaining = max(self._max_messages - len(system_prefix), 0)
+        if remaining <= 0:
+            # Budget exhausted by system messages; keep the most recent ones.
+            self._messages = (system_prefix + tail)[-self._max_messages :]
+            return
+
+        self._messages = system_prefix + tail[-remaining:]
 
     def modify_message(
         self,

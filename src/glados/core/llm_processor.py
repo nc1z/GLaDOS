@@ -602,16 +602,21 @@ class LanguageModelProcessor:
         return messages
 
     def _build_tools(self, autonomy_mode: bool) -> list[dict[str, Any]]:
-        """Return the tool list for the LLM request."""
+        """
+        Return the tool list for the LLM request.
+
+        For maximum responsiveness and to avoid local models hallucinating raw tool
+        JSON into the spoken reply, we **disable tools** for interactive
+        (non-autonomy) turns. Autonomy can still use tools when enabled.
+        """
+        # No tools for normal user interactions – keeps prompts smaller and avoids
+        # tool-call style JSON being spoken by TTS.
+        if not autonomy_mode:
+            return []
+
+        # Autonomy lane: allow tools, but strip vision if not configured.
         tools = list(tool_definitions)
         if self.vision_state is None:
-            tools = [tool for tool in tools if tool.get("function", {}).get("name") != "vision_look"]
-        if not autonomy_mode:
-            tools = [
-                tool
-                for tool in tools
-                if tool.get("function", {}).get("name") not in {"speak", "do_nothing"}
-            ]
             tools = [tool for tool in tools if tool.get("function", {}).get("name") != "vision_look"]
         if self.mcp_manager:
             try:

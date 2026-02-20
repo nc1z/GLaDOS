@@ -243,7 +243,12 @@ class Glados:
         self.tool_config = tool_config or {}
         self.tool_timeout = tool_timeout
         self.mcp_servers = mcp_servers or []
-        self._conversation_store = ConversationStore(initial_messages=list(personality_preprompt))
+        # Keep conversation history bounded so prompts stay small and local models stay fast.
+        # System/personality messages are preserved; we cap the rest.
+        self._conversation_store = ConversationStore(
+            initial_messages=list(personality_preprompt),
+            max_messages=64,
+        )
         self.vision_config = vision_config
         self.autonomy_config = autonomy_config or AutonomyConfig()
         self.vision_state: VisionState | None = VisionState() if self.vision_config else None
