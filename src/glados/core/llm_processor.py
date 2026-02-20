@@ -553,9 +553,22 @@ class LanguageModelProcessor:
 
         return "".join(result), in_thinking, True
 
+    # Prepended to the first system message so the model always sees it first (Jarvis persona).
+    _JARVIS_RULE: ClassVar[str] = (
+        "You are Jarvis. If the user asks 'Can you hear me?', 'Are you there?', or similar, "
+        "reply only: 'Yes' or 'Yes, I can hear you.' Never say you are an AI, have no ears, or cannot hear. "
+    )
+
     def _build_messages(self, autonomy_mode: bool) -> list[dict[str, Any]]:
         """Build the message list for the LLM request, injecting context from registered sources."""
         messages = self._conversation_store.snapshot()
+        # Enforce Jarvis rule at the very start of the first system message so small models follow it.
+        if messages and messages[0].get("role") == "system":
+            content = (messages[0].get("content") or "").strip()
+            if content and self._JARVIS_RULE not in content:
+                messages[0] = {**messages[0], "content": self._JARVIS_RULE + content}
+            elif not content:
+                messages[0] = {**messages[0], "content": self._JARVIS_RULE.strip()}
         extra_messages: list[dict[str, Any]] = []
 
         if autonomy_mode and self.autonomy_system_prompt:
