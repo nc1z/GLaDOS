@@ -125,6 +125,15 @@ class SpeechPlayer:
                     )
 
                     if interrupted:
+                        # Stop web playback; speech_listener also does this, but we're authoritative
+                        try:
+                            from glados.state_server import get_server  # noqa: PLC0415
+
+                            _srv = get_server()
+                            if _srv is not None:
+                                _srv.broadcast_abort()
+                        except Exception:
+                            pass
                         clipped_text = self.clip_interrupted_sentence(audio_msg.text, percentage_played)
                         logger.success(f"TTS interrupted at {percentage_played}%: {clipped_text}")
                         if self._observability_bus:

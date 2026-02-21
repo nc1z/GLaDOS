@@ -108,6 +108,20 @@ class StateServer:
             except queue.Full:
                 pass
 
+    def broadcast_abort(self) -> None:
+        """Tell all audio SSE clients to stop playback immediately."""
+        with self._lock:
+            audio_clients = list(self._audio_clients)
+        if not audio_clients:
+            return
+        payload = json.dumps({"action": "abort"})
+        msg = f"data: {payload}\n\n"
+        for q in audio_clients:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
+                pass
+
     def get_state(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._state)

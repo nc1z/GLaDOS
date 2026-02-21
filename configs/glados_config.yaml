@@ -2,7 +2,7 @@ Glados:
   llm_model: "llama3.2:1b"
   completion_url: "http://localhost:11434/api/chat"
   api_key: null  # Add your API key here if needed!
-  interruptible: false
+  interruptible: true
   audio_io: "sounddevice"
   input_mode: "audio"  # audio, text, or both
   tts_enabled: true

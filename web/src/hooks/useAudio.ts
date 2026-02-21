@@ -6,9 +6,11 @@ export function useAudio() {
   const [enabled, setEnabled]     = useState(false)
   const [lastChunk, setLastChunk] = useState<number>(0)
 
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const nextTimeRef = useRef(0)
-  const enabledRef  = useRef(false)
+  const audioCtxRef       = useRef<AudioContext | null>(null)
+  const nextTimeRef       = useRef(0)
+  const activeSourcesRef  = useRef<Set<AudioBufferSourceNode>>(new Set())
+  const abortSeqRef       = useRef(0)  // incremented on abort; in-flight decodes discard if seq increased
+  const enabledRef        = useRef(false)
   const esRef       = useRef<EventSource | null>(null)
   const retryRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -80,35 +82,41 @@ export function useAudio() {
 
       es.onmessage = async (event: MessageEvent<string>) => {
         if (!event.data || event.data.startsWith(':')) return
-        console.log('[audio] chunk received, size:', event.data.length, '| enabled:', enabledRef.current)
-
-        if (!enabledRef.current) {
-          console.log('[audio] queued but audio not yet unlocked — click anywhere to enable')
-          return
-        }
 
         try {
-          const parsed = JSON.parse(event.data) as { wav?: string; sampleRate?: number }
-          const { wav, sampleRate } = parsed
-          if (!wav) { console.warn('[audio] missing wav field'); return }
+          const parsed = JSON.parse(event.data) as { action?: string; wav?: string; sampleRate?: number }
+          if (parsed.action === 'abort') {
+            abortSeqRef.current += 1
+            for (const s of [...activeSourcesRef.current]) {
+              try { s.stop(); s.disconnect() } catch { /* already stopped */ }
+            }
+            activeSourcesRef.current.clear()
+            nextTimeRef.current = audioCtxRef.current?.currentTime ?? 0
+            return
+          }
 
-          console.log('[audio] decoding WAV, sampleRate:', sampleRate, 'b64 len:', wav.length)
+          if (!enabledRef.current) return
+          const { wav } = parsed
+          if (!wav) return
+
+          const seqBeforeDecode = abortSeqRef.current
           const ctx = getCtx()
-          console.log('[audio] ctx state:', ctx.state)
-
           const binary = atob(wav)
           const bytes  = new Uint8Array(binary.length)
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-          const buf     = await ctx.decodeAudioData(bytes.buffer.slice(0))
+          const buf = await ctx.decodeAudioData(bytes.buffer.slice(0))
+          if (abortSeqRef.current > seqBeforeDecode) return
+
           const startAt = Math.max(ctx.currentTime + 0.05, nextTimeRef.current)
           const source  = ctx.createBufferSource()
           source.buffer = buf
           source.connect(ctx.destination)
+          source.onended = () => activeSourcesRef.current.delete(source)
+          activeSourcesRef.current.add(source)
           source.start(startAt)
           nextTimeRef.current = startAt + buf.duration
           setLastChunk(Date.now())
-          console.log('[audio] ✓ playing', buf.duration.toFixed(2), 's at t=', startAt.toFixed(3))
         } catch (err) {
           console.error('[audio] error:', err)
         }

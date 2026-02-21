@@ -41,6 +41,20 @@ class SpeechListener:
     BUFFER_SIZE: int = 800  # Milliseconds of buffer BEFORE VAD detection
     PAUSE_LIMIT: int = 640  # Milliseconds of pause allowed before processing
     SIMILARITY_THRESHOLD: int = 3  # Levenshtein edits allowed for wake word match
+    HEARING_CHECK_COOLDOWN_S: float = 8.0  # Ignore repeated "can you hear me?" within this window
+
+    # Phrases that commonly get "Yes I can hear you" — suppress repeats within cooldown
+    _HEARING_CHECK_PHRASES: frozenset[str] = frozenset({
+        "can you hear me", "can you hear", "are you there", "are you there?",
+        "you there", "hear me", "can you hear me?",
+    })
+
+    # Stop commands: interrupt and silence, do NOT send to LLM (avoids new prompt)
+    _STOP_PHRASES: frozenset[str] = frozenset({
+        "stop", "stop talking", "stop talk", "stopped", "stopped talking",
+        "shut up", "be quiet", "quiet", "enough", "that's enough",
+        "enough already", "silence", "hush",
+    })
 
     def __init__(
         self,
@@ -78,6 +92,11 @@ class SpeechListener:
         self.wake_word = wake_word.lower() if wake_word else None
         self.pause_time = pause_time
         self.interruptible = interruptible
+
+        # Cooldown to avoid repeating "yes I can hear you" for back-to-back "can you hear me?"
+        self._last_hearing_check_at: float = 0.0
+        # True if we started recording while assistant was speaking (for wake-word-gated interrupt)
+        self._recording_during_speech: bool = False
 
         # Circular buffer to hold pre-activation samples
         self._buffer: deque[NDArray[np.float32]] = deque(maxlen=self.BUFFER_SIZE // self.VAD_SIZE)
@@ -185,16 +204,25 @@ class SpeechListener:
                 logger.debug(f"Detected voice activity but interruptibility is disabled: {self.interruptible=}, {self.currently_speaking_event.is_set()=}")
                 return
 
-            # Check if this is an interrupt (user speaking while GLaDOS was speaking)
             was_speaking = self.currently_speaking_event.is_set()
+            # When interruptible + wake_word: only interrupt after we confirm wake word in _process_detected_audio
+            wake_word_gated = bool(self.interruptible and self.wake_word and was_speaking)
 
-            self.audio_io.stop_speaking()
-            self.processing_active_event.clear()
-            self._samples = list(self._buffer)  # Clean conversion
-            self._recording_started = True
+            if wake_word_gated:
+                # Don't stop yet — record first; we'll interrupt in _process_detected_audio if wake word found
+                self._recording_during_speech = True
+                self._samples = list(self._buffer)
+                self._recording_started = True
+            else:
+                # Immediate interrupt (no wake word, or assistant wasn't speaking)
+                self.audio_io.stop_speaking()
+                self._broadcast_abort()
+                self.processing_active_event.clear()
+                self._samples = list(self._buffer)
+                self._recording_started = True
 
-            if was_speaking and self._on_interrupt:
-                self._on_interrupt("user_interrupt")
+                if was_speaking and self._on_interrupt:
+                    self._on_interrupt("user_interrupt")
 
     def _process_activated_audio(self, sample: NDArray[np.float32], vad_confidence: bool) -> None:
         """
@@ -266,6 +294,34 @@ class SpeechListener:
         remainder = " ".join(words[match_idx + 1 :]).lstrip(",.!? ")
         return remainder[:1].upper() + remainder[1:] if remainder else text
 
+    def _is_hearing_check(self, text: str) -> bool:
+        """True if *text* is a 'can you hear me?'-style phrase that gets 'Yes I can hear you'."""
+        norm = " ".join(text.lower().split()).strip(",.!?")
+        if not norm:
+            return False
+        return any(phrase in norm or norm in phrase for phrase in self._HEARING_CHECK_PHRASES)
+
+    def _is_stop_command(self, text: str) -> bool:
+        """True if *text* is a stop command — interrupt only, do not send to LLM."""
+        norm = " ".join(text.lower().split()).strip(",.!?")
+        if not norm:
+            return False
+        return any(
+            norm == phrase or norm.startswith(phrase + " ") or norm.startswith(phrase + ",")
+            for phrase in self._STOP_PHRASES
+        )
+
+    def _broadcast_abort(self) -> None:
+        """Tell web clients to stop playback immediately."""
+        try:
+            from glados.state_server import get_server  # noqa: PLC0415
+
+            srv = get_server()
+            if srv is not None:
+                srv.broadcast_abort()
+        except Exception:
+            pass
+
     def reset(self) -> None:
         """
         Resets the internal state of the speech listener, clearing all audio buffers and counters.
@@ -278,6 +334,7 @@ class SpeechListener:
         """
         logger.debug("Resetting recorder...")
         self._recording_started = False
+        self._recording_during_speech = False
         self._samples.clear()
         self._gap_counter = 0
         self._buffer.clear()
@@ -310,6 +367,29 @@ class SpeechListener:
                 clean_text = detected_text
                 if self.wake_word:
                     clean_text = self._strip_wake_word(detected_text)
+
+                # If we recorded during assistant speech, interrupt only now (wake word confirmed)
+                if self._recording_during_speech:
+                    self.audio_io.stop_speaking()
+                    self._broadcast_abort()
+                    self.processing_active_event.clear()
+                    if self._on_interrupt:
+                        self._on_interrupt("user_interrupt")
+
+                # Stop commands: interrupt and drop — do not send to LLM (avoids new response)
+                if self._is_stop_command(clean_text):
+                    logger.info("Stop command detected — not forwarding to LLM")
+                    self.reset()
+                    return
+
+                # Suppress repeated "can you hear me?" within cooldown to avoid
+                # echoing "yes I can hear you" over and over
+                if self._is_hearing_check(clean_text):
+                    if time.time() - self._last_hearing_check_at < self.HEARING_CHECK_COOLDOWN_S:
+                        # Drop silently — already answered recently
+                        self.reset()
+                        return
+                    self._last_hearing_check_at = time.time()
 
                 logger.success(f"ASR text: '{clean_text}'")
                 if self._observability_bus:
