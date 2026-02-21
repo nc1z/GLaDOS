@@ -40,7 +40,7 @@ class SpeechListener:
     VAD_SIZE: int = 32  # Milliseconds of sample for Voice Activity Detection (VAD)
     BUFFER_SIZE: int = 800  # Milliseconds of buffer BEFORE VAD detection
     PAUSE_LIMIT: int = 640  # Milliseconds of pause allowed before processing
-    SIMILARITY_THRESHOLD: int = 2  # Threshold for wake word similarity
+    SIMILARITY_THRESHOLD: int = 3  # Levenshtein edits allowed for wake word match
 
     def __init__(
         self,
@@ -241,7 +241,30 @@ class SpeechListener:
 
         words = text.split()
         closest_distance = min(distance(word.lower(), self.wake_word) for word in words)
-        return closest_distance < self.SIMILARITY_THRESHOLD
+        return closest_distance <= self.SIMILARITY_THRESHOLD
+
+    def _strip_wake_word(self, text: str) -> str:
+        """Remove the wake word (and trailing punctuation/comma) from the start of *text*.
+
+        Uses the same fuzzy matching as ``_wakeword_detected`` so that
+        transcription variants like "Jarvis," or "Gervis" are all stripped.
+        Returns the cleaned text, capitalising the first remaining letter.
+        """
+        assert self.wake_word is not None
+        words = text.split()
+        if not words:
+            return text
+        # Find the index of the wake-word token (usually 0, but be safe)
+        match_idx = None
+        for i, word in enumerate(words):
+            stripped = word.strip(",.!?").lower()
+            if distance(stripped, self.wake_word) <= self.SIMILARITY_THRESHOLD:
+                match_idx = i
+                break
+        if match_idx is None:
+            return text
+        remainder = " ".join(words[match_idx + 1 :]).lstrip(",.!? ")
+        return remainder[:1].upper() + remainder[1:] if remainder else text
 
     def reset(self) -> None:
         """
@@ -278,21 +301,27 @@ class SpeechListener:
         detected_text = self.asr(self._samples)
 
         if detected_text:
-            logger.success(f"ASR text: '{detected_text}'")
-
             if self.wake_word and not self._wakeword_detected(detected_text):
-                logger.info(f"Required wake word {self.wake_word=} not detected.")
+                # Drop silently — no logs — so echo/ambient noise leaves no trace
+                pass
             else:
+                # Strip the wake word (and any punctuation around it) from the
+                # front of the text so the LLM receives a clean query.
+                clean_text = detected_text
+                if self.wake_word:
+                    clean_text = self._strip_wake_word(detected_text)
+
+                logger.success(f"ASR text: '{clean_text}'")
                 if self._observability_bus:
                     self._observability_bus.emit(
                         source="asr",
                         kind="user_input",
-                        message=trim_message(detected_text),
+                        message=trim_message(clean_text),
                     )
                 self.llm_queue.put(
                     {
                         "role": "user",
-                        "content": detected_text,
+                        "content": clean_text,
                         "_enqueued_at": time.time(),
                         "_lane": "priority",
                     }
