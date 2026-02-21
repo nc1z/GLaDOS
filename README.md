@@ -44,6 +44,7 @@ Most voice assistants wait for wake words. GLaDOS doesn't wait—she observes, t
 - **Vision**: FastVLM gives her eyes. [Details](/docs/vision.md) | [Demo](https://www.youtube.com/watch?v=JDd9Rc4toEo)
 - **Autonomy**: She watches, waits, and speaks when she has something to say. [Details](/docs/autonomy.md)
 - **MCP Tools**: Extensible tool system for home automation, system info, etc. [Details](/docs/mcp.md)
+- **Web UI + Chromecast**: 3D visualization and voice I/O in the browser; cast to TV and speak via Bluetooth mic. [Setup](/docs/WEB_CHROMECAST_SETUP.md)
 - **8GB SBC**: Runs on a Rock5b with RK3588 NPU. [Branch](https://github.com/dnhkng/RKLLM-Gradio)
 
 ## Roadmap
